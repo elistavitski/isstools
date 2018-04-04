@@ -18,24 +18,27 @@ import pandas as pd
 
 from matplotlib.figure import Figure
 
+
 from isstools.xasdata import xasdata
 from isstools.xasproject import xasproject
+from isstools.conversions.xray import k2e, e2k
 
 ui_path = pkg_resources.resource_filename('isstools', 'ui/Xview.ui')
-gui_form = uic.loadUiType(ui_path)[0]  # Load the UI
+#gui_form = uic.loadUiType(ui_path)[0]  # Load the UI
 
+class XviewGui(*uic.loadUiType(ui_path)):
 
+#class GUI(QtWidgets.QMainWindow, gui_form):
+    def __init__(self, hhm_pulses_per_deg, processing_sender=None, db=None, db_analysis=None,
+                 *args, **kwargs):
 
-class GUI(QtWidgets.QMainWindow, gui_form):
-    def __init__(self, hhm_pulses_per_deg, processing_sender=None, db=None, db_analysis=None, parent=None):
-
-        QtWidgets.QMainWindow.__init__(self, parent)
+        super().__init__(*args, **kwargs)
         self.setupUi(self)
 
         self.hhm_pulses_per_deg = hhm_pulses_per_deg
         self.sender = processing_sender
         self.db = db
-        self.db_analysis = db
+        self.db_analysis = db_analysis
         self.gen_parser = xasdata.XASdataGeneric(hhm_pulses_per_deg, db=db)
 
         self.xasproject = xasproject.XASProject()
@@ -54,6 +57,7 @@ class GUI(QtWidgets.QMainWindow, gui_form):
         self.addCanvas()
         self.keys = []
         self.last_keys = []
+        self.current_plot_in = ''
 
 
         self.binned_data = []
@@ -77,29 +81,86 @@ class GUI(QtWidgets.QMainWindow, gui_form):
         self.pushbutton_add_to_xasproject.clicked.connect(self.add_files_to_xas_project)
         self.listView_xasproject.itemSelectionChanged.connect(self.show_ds_params)
         self.listView_xasproject.setSelectionMode(QtWidgets.QAbstractItemView.ExtendedSelection)
-        self.pushbutton_remove_xasproject.clicked.connect(self.remove_from_xas_project)
         self.pushbutton_plotE_xasproject.clicked.connect(self.plot_xas_project_in_E)
         self.pushbutton_plotK_xasproject.clicked.connect(self.plot_xas_project_in_K)
-
+        self.pushbutton_plotR_xasproject.clicked.connect(self.plot_xas_project_in_R)
         self.lineEdit_e0.textEdited.connect(self.update_ds_params)
         self.lineEdit_preedge_lo.textEdited.connect(self.update_ds_params)
         self.lineEdit_preedge_hi.textEdited.connect(self.update_ds_params)
         self.lineEdit_postedge_lo.textEdited.connect(self.update_ds_params)
         self.lineEdit_postedge_hi.textEdited.connect(self.update_ds_params)
+        self.lineEdit_spline_lo.textEdited.connect(self.update_ds_params)
+        self.lineEdit_spline_hi.textEdited.connect(self.update_ds_params)
+        self.lineEdit_clamp_lo.textEdited.connect(self.update_ds_params)
+        self.lineEdit_clamp_hi.textEdited.connect(self.update_ds_params)
+        self.lineEdit_k_ft_lo.textEdited.connect(self.update_ds_params)
+        self.lineEdit_k_ft_hi.textEdited.connect(self.update_ds_params)
 
         self.pushButton_e0_set.clicked.connect(self.set_ds_params_from_plot)
         self.pushButton_preedge_lo_set.clicked.connect(self.set_ds_params_from_plot)
         self.pushButton_preedge_hi_set.clicked.connect(self.set_ds_params_from_plot)
         self.pushButton_postedge_lo_set.clicked.connect(self.set_ds_params_from_plot)
         self.pushButton_postedge_hi_set.clicked.connect(self.set_ds_params_from_plot)
-        self.pushButton_push_norm_param_to_selected.clicked.connect(self.push_norm_param)
-        self.pushButton_push_norm_param_to_all.clicked.connect(self.push_norm_param)
+        self.pushButton_spline_lo_set.clicked.connect(self.set_ds_params_from_plot)
+        self.pushButton_spline_hi_set.clicked.connect(self.set_ds_params_from_plot)
+        self.pushButton_k_ft_lo_set.clicked.connect(self.set_ds_params_from_plot)
+        self.pushButton_k_ft_hi_set.clicked.connect(self.set_ds_params_from_plot)
 
+        self.pushButton_truncate_at_set.clicked.connect(self.set_ds_params_from_plot)
+
+        # Push to selected/all  buttons defs
+        self.pushButton_push_norm_param_to_selected.clicked.connect(self.push_param)
+        self.pushButton_push_norm_param_to_all.clicked.connect(self.push_param)
+        self.pushButton_push_bkg_param_to_selected.clicked.connect(self.push_param)
+        self.pushButton_push_bkg_param_to_all.clicked.connect(self.push_param)
+
+        self.pushButton_truncate_below.clicked.connect(self.truncate)
+        self.pushButton_truncate_above.clicked.connect(self.truncate)
+
+        #Menu defs
         self.action_exit.triggered.connect(self.close_app)
         self.action_save_project.triggered.connect(self.save_xas_project)
         self.action_open_project.triggered.connect(self.open_xas_project)
         self.action_save_datasets_as_text.triggered.connect(self.save_xas_datasets_as_text)
+        self.action_combine_and_save_as_text.triggered.connect(self.combine_and_save_xas_datasets_as_text)
         self.action_merge.triggered.connect(self.merge_datasets)
+        self.action_rename.triggered.connect(self.rename_dataset)
+        self.action_remove.triggered.connect(self.remove_from_xas_project)
+
+        self.lineEdit_to_ds_parameter_dict = {
+            'lineEdit_preedge_lo':  'pre1',
+            'lineEdit_preedge_hi':  'pre2',
+            'lineEdit_postedge_lo': 'norm1',
+            'lineEdit_postedge_hi': 'norm2',
+            'lineEdit_e0':          'e0',
+            'lineEdit_spline_lo':   'kmin',
+            'lineEdit_spline_hi':   'kmax',
+            'lineEdit_clamp_lo':    'clamp_lo',
+            'lineEdit_clamp_hi':    'clamp_hi',
+            'lineEdit_truncate_at': 'truncate',
+            'lineEdit_k_ft_lo':     'kmin_ft',
+            'lineEdit_k_ft_hi':     'kmax_ft'
+        }
+
+        self.pushButton_set_to_lineEdit_dict = {
+            'pushButton_e0_set':           'lineEdit_e0',
+            'pushButton_preedge_lo_set':   'lineEdit_preedge_lo',
+            'pushButton_preedge_hi_set':   'lineEdit_preedge_hi',
+            'pushButton_postedge_lo_set':  'lineEdit_postedge_lo',
+            'pushButton_postedge_hi_set':  'lineEdit_postedge_hi',
+            'pushButton_spline_lo_set':    'lineEdit_spline_lo',
+            'pushButton_spline_hi_set':    'lineEdit_spline_hi',
+            'pushButton_k_ft_lo_set':      'lineEdit_k_ft_lo',
+            'pushButton_k_ft_hi_set':      'lineEdit_k_ft_hi',
+            'pushButton_truncate_at_set':  'lineEdit_truncate_at'
+        }
+        self.windows_list = [
+            'hanning',
+            'kaiser',
+            'gaussian',
+            'sine'
+        ]
+
 
     def close_app(self):
         self.close()
@@ -124,20 +185,22 @@ class GUI(QtWidgets.QMainWindow, gui_form):
         self.canvasXASProject = FigureCanvas(self.figureXASProject)
 
         self.toolbar_XASProject = NavigationToolbar(self.canvasXASProject, self)
-        self.layout_plot_xasproject.addWidget(self.toolbar_XASProject)
         self.layout_plot_xasproject.addWidget(self.canvasXASProject)
+        self.layout_plot_xasproject.addWidget(self.toolbar_XASProject)
+
         self.canvasXASProject.draw()
         #layout_plot_xasproject
 
     def select_working_folder(self):
         self.workingFolder = QtWidgets.QFileDialog.getExistingDirectory(self, "Select a folder", self.workingFolder,
                                                                         QtWidgets.QFileDialog.ShowDirsOnly)
-        self.settings.setValue('WorkingFolder', self.workingFolder)
-        if len(self.workingFolder) > 50:
-            self.label_working_folder.setText(self.workingFolder[1:20] + '...' + self.WorkingFolder[-30:])
-        else:
-            self.label_working_folder.setText(self.workingFolder)
-        self.getFileList()
+        if  self.workingFolder:
+            self.settings.setValue('WorkingFolder', self.workingFolder)
+            if len(self.workingFolder) > 50:
+                self.label_working_folder.setText(self.workingFolder[1:20] + '...' + self.WorkingFolder[-30:])
+            else:
+                self.label_working_folder.setText(self.workingFolder)
+            self.getFileList()
 
     def getFileList(self):
         if self.workingFolder:
@@ -216,13 +279,23 @@ class GUI(QtWidgets.QMainWindow, gui_form):
         self.figureBinned.tight_layout()
         self.canvas.draw_idle()
 
-    def push_norm_param(self):
-        norm_param_list = [
+    def push_param(self):
+        self.norm_param_list = [
             'e0',
             'pre1',
             'pre2',
             'norm1',
             'norm2',
+        ]
+
+        self.bkg_param_list = [
+            'kmin',
+            'kmax',
+            'clamp_lo',
+            'clamp_hi'
+        ]
+        self.ft_param_list =[
+
         ]
         selection = self.listView_xasproject.selectedIndexes()
         if selection != []:
@@ -232,13 +305,24 @@ class GUI(QtWidgets.QMainWindow, gui_form):
             ds_master = self.xasproject[index]
             if sender_object == 'pushButton_push_norm_param_to_selected':
                 for indx, obj in enumerate(selection):
-                    ds = self.xasproject[ selection[indx].row()]
-                    for param in norm_param_list:
+                    ds = self.xasproject[selection[indx].row()]
+                    for param in self.norm_param_list:
                         setattr(ds, param, getattr(ds_master, param))
             if sender_object == 'pushButton_push_norm_param_to_all':
                 for indx, obj in enumerate(self.xasproject):
-                    for param in norm_param_list:
+                    for param in self.norm_param_list:
                         setattr(self.xasproject[indx], param, getattr(ds_master, param))
+            if sender_object == 'pushButton_push_bkg_param_to_selected':
+                for indx, obj in enumerate(selection):
+                    ds = self.xasproject[selection[indx].row()]
+                    for param in self.bkg_param_list:
+                        setattr(ds, param, getattr(ds_master, param))
+            if sender_object == 'pushButton_push_bkg_param_to_all':
+                for indx, obj in enumerate(self.xasproject):
+                    for param in self.bkg_param_list:
+                        setattr(self.xasproject[indx], param, getattr(ds_master, param))
+
+
 
 
 
@@ -246,20 +330,15 @@ class GUI(QtWidgets.QMainWindow, gui_form):
     def update_ds_params(self):
         sender = QObject()
         sender_object = sender.sender().objectName()
+        print(sender_object)
         selection = self.listView_xasproject.selectedIndexes()
         if selection != []:
             index=selection[0].row()
             ds = self.xasproject[index]
-            sender_dict = {
-                'lineEdit_preedge_lo': 'pre1',
-                'lineEdit_preedge_hi': 'pre2',
-                'lineEdit_postedge_lo': 'norm1',
-                'lineEdit_postedge_hi': 'norm2',
-                'lineEdit_e0': 'e0'
-            }
             try:
                 self.statusBar().showMessage(sender_object)
-                setattr(ds, sender_dict[sender_object], float(getattr(self, sender_object).text()))
+                print(getattr(self, sender_object).text())
+                setattr(ds, self.lineEdit_to_ds_parameter_dict[sender_object], float(getattr(self, sender_object).text()))
             except:
                 self.statusBar().showMessage('Use numbers only')
 
@@ -279,21 +358,46 @@ class GUI(QtWidgets.QMainWindow, gui_form):
             self._disconnect_cid()
 
     def mouse_press_event(self, event):
-        sender_dict = {
-            'pushButton_e0_set': 'lineEdit_e0',
-            'pushButton_preedge_lo_set': 'lineEdit_preedge_lo',
-            'pushButton_preedge_hi_set': 'lineEdit_preedge_hi',
-            'pushButton_postedge_lo_set': 'lineEdit_postedge_lo',
-            'pushButton_postedge_hi_set': 'lineEdit_postedge_hi',
-        }
-        lineEdit=getattr(self, sender_dict[self.sender_object])
 
-        if  self.sender_object == 'pushButton_e0_set':
+        e_vs_k_discriminate_list = ['pushButton_spline_lo_set',
+                                    'pushButton_spline_hi_set',
+                                    'pushButton_k_ft_lo_set',
+                                    'pushButton_k_ft_hi_set'
+                                    ]
+
+        lineEdit=getattr(self, self.pushButton_set_to_lineEdit_dict[self.sender_object])
+        e0=float(self.lineEdit_e0.text())
+        if self.sender_object == 'pushButton_e0_set':
             new_value = event.xdata
+
+        elif self.sender_object == 'pushButton_truncate_at_set':
+            if self.current_plot_in == 'e':
+                new_value = event.xdata
+            elif self.current_plot_in == 'k':
+                new_value = k2e(event.xdata, e0)
+
+        elif self.sender_object in e_vs_k_discriminate_list:
+            if self.current_plot_in == 'k':
+                new_value = event.xdata
+            elif self.current_plot_in == 'e':
+                new_value = e2k(event.xdata, e0)
         else:
-            new_value = event.xdata-float(self.lineEdit_e0.text())
+            new_value = event.xdata-e0
 
         lineEdit.setText('{:.1f}'.format(new_value))
+        sender_object = lineEdit
+
+        print (sender_object)
+        selection = self.listView_xasproject.selectedIndexes()
+        if selection != []:
+            index=selection[0].row()
+            ds = self.xasproject[index]
+            try:
+                float(sender_object.text())
+                setattr(ds, self.lineEdit_to_ds_parameter_dict[sender_object.objectName()], float(sender_object.text()))
+            except:
+                print('what''s going wrong')
+
         self._disconnect_cid()
 
 
@@ -306,9 +410,17 @@ class GUI(QtWidgets.QMainWindow, gui_form):
             self.lineEdit_preedge_hi.setText('{:.1f}'.format(ds.pre2))
             self.lineEdit_postedge_lo.setText('{:.1f}'.format(ds.norm1))
             self.lineEdit_postedge_hi.setText('{:.1f}'.format(ds.norm2))
+            self.lineEdit_spline_lo.setText('{:.1f}'.format(ds.kmin))
+            self.lineEdit_spline_hi.setText('{:.1f}'.format(ds.kmax))
+            self.lineEdit_clamp_lo.setText('{:.1f}'.format(ds.clamp_lo))
+            self.lineEdit_clamp_hi.setText('{:.1f}'.format(ds.clamp_hi))
+            self.lineEdit_k_ft_lo.setText('{:.1f}'.format(ds.kmin_ft))
+            self.lineEdit_k_ft_hi.setText('{:.1f}'.format(ds.kmax_ft))
+
             # Make the first selected line bold, and reset bold font for other selections
             font = QtGui.QFont()
             font.setBold(False)
+
             for i in range(self.listView_xasproject.count()):
                 self.listView_xasproject.item(i).setFont(font)
             font.setBold(True)
@@ -341,6 +453,8 @@ class GUI(QtWidgets.QMainWindow, gui_form):
                 if self.checkBox_inv_bin.checkState():
                     mu = -mu
                 mu=np.array(mu)
+
+                print(type(mu))
                 ds = xasproject.XASDataSet(name=name,md=md,energy=df['energy'],mu=mu, filename=filepath,datatype='experiment')
                 ds.header = header
                 self.xasproject.append(ds)
@@ -350,7 +464,6 @@ class GUI(QtWidgets.QMainWindow, gui_form):
 
 
     def update_xas_project_list(self, datasets):
-        print(2)
         self.listView_xasproject.clear()
         for ds in datasets:
             self.listView_xasproject.addItem(ds.name)
@@ -358,73 +471,97 @@ class GUI(QtWidgets.QMainWindow, gui_form):
     def remove_from_xas_project(self):
         for index in self.listView_xasproject.selectedIndexes()[::-1]: #[::-1] to remove using indexes from last to first
             self.xasproject.removeDatasetIndex(index.row())
-            print('delete')
+            self.statusBar().showMessage('Datasets deleted')
 
     def plot_xas_project_in_E(self):
-        self.figureXASProject.ax.clear()
-        self.toolbar_XASProject._views.clear()
-        self.toolbar_XASProject._positions.clear()
-        self.toolbar_XASProject._update_view()
-        self.canvasXASProject.draw_idle()
+        if self.listView_xasproject.selectedIndexes():
+            self.reset_figure(self.figureXASProject.ax, self.toolbar_XASProject, self.canvasXASProject)
+
+            for index in self.listView_xasproject.selectedIndexes():
+                ds = self.xasproject[index.row()]
+                ds.normalize_force()
+                ds.extract_chi_force()
+                ds.extract_ft()
+                energy = ds.energy
+                if self.radioButton_mu_xasproject.isChecked():
+                    data = ds.mu
+                elif self.radioButton_norm_xasproject.isChecked():
+                    if self.checkBox_norm_flat_xasproject.checkState():
+                        data = ds.flat
+                    else:
+                        data = ds.norm
+                if self.checkBox_deriv.isChecked():
+                    data = ds.mu_deriv
+                    energy = ds.energy_deriv
+                self.figureXASProject.ax.plot(energy, data, label = ds.name)
+
+                if self.radioButton_mu_xasproject.isChecked() and not self.checkBox_deriv.isChecked():
+                    if self.checkBox_preedge_show.checkState():
+                        self.figureXASProject.ax.plot(ds.energy, ds.pre_edge,label='Preedge', linewidth=0.75)
+                    if self.checkBox_postedge_show.checkState():
+                        self.figureXASProject.ax.plot(ds.energy, ds.post_edge, label='Postedge', linewidth=0.75)
+                    if self.checkBox_background_show.checkState():
+                        self.figureXASProject.ax.plot(ds.energy, ds.bkg, label='Background', linewidth=0.75)
 
 
-        for index in self.listView_xasproject.selectedIndexes():
-            ds = self.xasproject[index.row()]
-            ds.subtract_background_force()
-        #for ds in self.xasproject:
-            energy = ds.energy
-            if self.radioButton_mu_xasproject.isChecked():
-                data = ds.mu
-            elif self.radioButton_norm_xasproject.isChecked():
-                if self.checkBox_norm_flat_xasproject.checkState():
-                    data = ds.flat
-                else:
-                    data = ds.norm
-            if self.checkBox_deriv.isChecked():
-                data = ds.mu_deriv
-                energy = ds.energy_deriv
-            self.figureXASProject.ax.plot(energy, data, label = ds.name)
+            self.set_figure(self.figureXASProject.ax, self.canvasXASProject,label_x ='Energy /eV',
+                       label_y =r'$\chi  \mu$' + '(E)'),
 
-            if self.radioButton_mu_xasproject.isChecked() and not self.checkBox_deriv.isChecked():
-                if self.checkBox_preedge_show.checkState():
-                    line = self.figureXASProject.ax.plot(ds.energy, ds.pre_edge,label='Preedge', linewidth=0.75)
-                if self.checkBox_postedge_show.checkState():
-                    self.figureXASProject.ax.plot(ds.energy, ds.post_edge, label='Postedge', linewidth=0.75)
-                if self.checkBox_background_show.checkState():
-                    self.figureXASProject.ax.plot(ds.energy, ds.bkg, label='Background', linewidth=0.75)
-
-        self.figureXASProject.ax.legend(fontsize = 'small')
-        self.figureXASProject.ax.grid(alpha=0.4)
-        self.figureXASProject.ax.set_ylabel(r'$\chi  \mu$' + '(E)', size='13')
-        self.figureXASProject.ax.set_xlabel('Energy /eV', size='13')
-        self.canvasXASProject.draw_idle()
+            if self.checkBox_force_range_E.checkState():
+                self.figureXASProject.ax.set_xlim((float(self.lineEdit_e0.text())+float(self.lineEdit_range_E_lo.text())),
+                                                  (float(self.lineEdit_e0.text()) + float(self.lineEdit_range_E_hi.text())))
+            self.current_plot_in = 'e'
 
 
     def plot_xas_project_in_K(self):
-        self.figureXASProject.ax.clear()
-        self.toolbar_XASProject._views.clear()
-        self.toolbar_XASProject._positions.clear()
-        self.toolbar_XASProject._update_view()
-        self.canvasXASProject.draw_idle()
+        if self.listView_xasproject.selectedIndexes():
+            self.reset_figure(self.figureXASProject.ax, self.toolbar_XASProject, self.canvasXASProject)
+            window=self.set_ft_window()
+            for index in self.listView_xasproject.selectedIndexes():
+                ds = self.xasproject[index.row()]
+                ds.extract_chi_force()
+                ds.extract_ft_force(window = window)
 
-        for index in self.listView_xasproject.selectedIndexes():
-            ds = self.xasproject[index.row()]
-            ds.extract_chi_force()
-            if self.radioButton_k_weight_1.isChecked():
-                data=ds.k*ds.chi
-            elif self.radioButton_k_weight_2.isChecked():
-                data = ds.k *ds.k * ds.chi
-            elif self.radioButton_k_weight_3.isChecked():
-                data = ds.k * ds.k * ds. k* ds.chi
-            self.figureXASProject.ax.plot(ds.k, data, label = ds.name)
+                data = ds.chi * np.power(ds.k,self.spinBox_k_weight.value())
+
+                self.figureXASProject.ax.plot(ds.k, data, label = ds.name)
+                data_max = data.max()
+                if self.checkBox_show_window.isChecked():
+                    self.figureXASProject.ax.plot(ds.k, ds.kwin*data_max/2, label='Windows')
 
 
-        self.figureXASProject.ax.legend(fontsize = 'small')
-        self.figureXASProject.ax.grid(alpha=0.4)
-        self.figureXASProject.ax.set_ylabel(r'$\chi  \mu$' + '(k)', size='13')
-        self.figureXASProject.ax.set_xlabel(('k (' + r'$\AA$' + '$^1$' +')'), size='13')
-        self.canvasXASProject.draw_idle()
-        self.canvasXASProject.draw_idle()
+            self.set_figure(self.figureXASProject.ax, self.canvasXASProject,label_x ='k (' + r'$\AA$' + '$^1$' +')',
+                       label_y =r'$\chi  \mu$' + '(k)')
+
+
+            if self.checkBox_force_range_k.checkState():
+                self.figureXASProject.ax.set_xlim(float(self.lineEdit_range_k_lo.text()),
+                                                  float(self.lineEdit_range_k_hi.text()))
+            self.current_plot_in = 'k'
+
+    def plot_xas_project_in_R(self):
+        if self.listView_xasproject.selectedIndexes():
+            self.reset_figure(self.figureXASProject.ax,self.toolbar_XASProject, self.canvasXASProject)
+            window = self.set_ft_window()
+            for index in self.listView_xasproject.selectedIndexes():
+                ds = self.xasproject[index.row()]
+                ds.extract_ft_force(window=window)
+                if self.checkBox_show_chir_mag.checkState():
+                    self.figureXASProject.ax.plot(ds.r, ds.chir_mag, label = ds.name)
+                if self.checkBox_show_chir_im.checkState():
+                    self.figureXASProject.ax.plot(ds.r, ds.chir_im, label=(ds.name + ' Im'))
+                if self.checkBox_show_chir_re.checkState():
+                    self.figureXASProject.ax.plot(ds.r, ds.chir_re, label=(ds.name + ' Re'))
+                #if self.checkBox_show_chir_pha.checked:
+                #    self.figureXASProject.ax.plot(ds.r, ds.chir_pha, label=(ds.name + ' Ph'))
+
+            self.set_figure(self.figureXASProject.ax,self.canvasXASProject, label_y=r'$\chi  \mu$' + '(k)',
+                       label_x='R (' + r'$\AA$'  +')')
+            if self.checkBox_force_range_R.checkState():
+                self.figureXASProject.ax.set_xlim(float(self.lineEdit_range_R_lo.text()),
+                                                  float(self.lineEdit_range_R_hi.text()))
+            self.current_plot_in = 'R'
+
 
     def save_xas_project(self):
         options = QtWidgets.QFileDialog.DontUseNativeDialog
@@ -457,12 +594,7 @@ class GUI(QtWidgets.QMainWindow, gui_form):
         #                                          'XAS project files (*.xas)', options=options)
         selection = self.listView_xasproject.selectedIndexes()
         if selection != []:
-            messageBox = QtWidgets.QMessageBox()
-            messageBox.setText('Save datasets as..')
-            messageBox.addButton(QtWidgets.QPushButton('mu(E)'), QtWidgets.QMessageBox.YesRole)
-            messageBox.addButton(QtWidgets.QPushButton('normalized mu(E)'), QtWidgets.QMessageBox.NoRole)
-            messageBox.addButton(QtWidgets.QPushButton('flattened mu(E)'), QtWidgets.QMessageBox.NoRole)
-            ret = messageBox.exec_()
+            ret = self.message_box_save_datasets_as()
             options = QtWidgets.QFileDialog.DontUseNativeDialog
             pathname = QtWidgets.QFileDialog.getExistingDirectory(self, 'Choose folder...', self.workingFolder,
                                                                     options=options)
@@ -487,7 +619,6 @@ class GUI(QtWidgets.QMainWindow, gui_form):
 
                     filename_new = '{}/{}.{}'.format(pathname,filename,'mu')
                     fid = open(filename_new, 'w')
-                    print(fid)
                     header_wo_cols_names = ds.header[0:ds.header.rfind('#')]
                     fid.write(header_wo_cols_names)
                     fid.write(separator)
@@ -502,11 +633,15 @@ class GUI(QtWidgets.QMainWindow, gui_form):
         selection = self.listView_xasproject.selectedIndexes()
         if selection != []:
             mu = self.xasproject._datasets[selection[0].row()].mu
+            energy_master=self.xasproject._datasets[selection[0].row()].energy
             mu_array=np.zeros([len(selection),len(mu)])
             energy = self.xasproject._datasets[selection[0].row()].energy
             md=['merged']
             for indx, obj in enumerate(selection):
-                mu_array[indx,:] = self.xasproject._datasets[selection[indx].row()].mu.mu
+                energy = self.xasproject._datasets[selection[indx].row()].energy
+                mu = self.xasproject._datasets[selection[indx].row()].mu.mu
+                mu = np.interp(energy_master, energy, mu)
+                mu_array[indx, :]=mu
                 md.append(self.xasproject._datasets[selection[indx].row()].filename)
 
             mu_merged = np.average(mu_array, axis=0)
@@ -516,7 +651,138 @@ class GUI(QtWidgets.QMainWindow, gui_form):
             self.xasproject.project_changed()
 
 
+    def combine_and_save_xas_datasets_as_text(self):
+        selection = self.listView_xasproject.selectedIndexes()
+        if selection != []:
+            ds_list = []
+            md = []
+            for indx, obj in enumerate(selection):
+                ds_list.append(self.xasproject._datasets[selection[indx].row()])
 
+            ds_list.sort(key=lambda x: x.name)
+            mu = ds_list[0].mu
+            mu_array = np.zeros([len(selection)+1, len(mu)])
+            energy_master = ds_list[0].energy
+
+            mu_array[0, :]=energy_master
+            ret = self.message_box_save_datasets_as()
+            for indx, obj in enumerate(selection):
+                ds = ds_list[indx]
+                energy=ds.energy
+                if ret == 0:
+                    yy = np.array(ds.mu.mu)
+                    keys = '# energy(eV), mu(E)\n'
+                elif ret == 1:
+                    yy = ds.norm
+                    keys = '# energy(eV), normalized mu(E)\n'
+                elif ret == 2:
+                    yy = ds.flat
+                    keys = '# energy(eV), flattened normalized mu(E)\n'
+
+                yy=np.interp(energy_master,energy,yy)
+                mu_array[indx+1, :] = yy
+                md.append(ds.name)
+
+            self.mu_array = mu_array
+            options = QtWidgets.QFileDialog.DontUseNativeDialog
+            filename, _ = QtWidgets.QFileDialog.getSaveFileName(self, 'Save XAS project', self.workingFolder,
+                                                                'XAS dataset (*.dat)', options=options)
+            if filename:
+                if Path(filename).suffix != '.xas':
+                    filename = filename + '.xas'
+                print(filename)
+                filelist = "{}".format("\n".join(md[0:]))
+                separator = '\n #______________________________________________________\n'
+
+                header = '{} {} {}'.format(filelist,separator,keys)
+                fid = open(filename, 'w')
+                np.savetxt(fid, np.transpose(mu_array), header = header)
+                fid.close()
+
+    def rename_dataset(self):
+        selection = self.listView_xasproject.selectedIndexes()
+        if selection != []:
+            name = self.xasproject._datasets[selection[0].row()].name
+            new_name, ok = QtWidgets.QInputDialog.getText(self, 'Rename dataset', 'Enter new name:',QtWidgets.QLineEdit.Normal, name)
+            if ok:
+                self.xasproject._datasets[selection[0].row()].name=new_name
+                self.xasproject.project_changed()
+
+    def truncate(self):
+        sender = QObject()
+        sender_object = sender.sender().objectName()
+        print(sender_object)
+        selection = self.listView_xasproject.selectedIndexes()
+        if selection != []:
+            for indx, obj in enumerate(selection):
+                print(indx)
+                ds = self.xasproject._datasets[selection[indx].row()]
+                print(ds.name)
+                energy=ds.energy
+                mu  = ds.mu
+                indx_energy_to_truncate_at = (np.abs(energy - float(self.lineEdit_truncate_at.text()))).argmin()
+
+                if sender_object == 'pushButton_truncate_below':
+                    ds.energy = energy[indx_energy_to_truncate_at:]
+                    ds.mu = mu[indx_energy_to_truncate_at:]
+
+                elif sender_object == 'pushButton_truncate_above':
+                    ds.energy = energy[0:indx_energy_to_truncate_at]
+
+                    ds.mu = mu[0:indx_energy_to_truncate_at:]
+                ds.update_larch()
+                self.xasproject._datasets[selection[indx].row()]=ds
+
+    '''
+     
+     Service routines
+     
+     '''
+
+    def set_figure(self,axis,canvas, label_x='', label_y=''):
+        axis.legend(fontsize='small')
+        axis.grid(alpha=0.4)
+        axis.set_ylabel(label_y, size='13')
+        axis.set_xlabel(label_x, size='13')
+        canvas.draw_idle()
+
+    def reset_figure(self,axis,toolbar,canvas):
+        axis.clear()
+        toolbar._views.clear()
+        toolbar._positions.clear()
+        toolbar._update_view()
+        canvas.draw_idle()
+
+
+    def message_box_save_datasets_as(self):
+        messageBox = QtWidgets.QMessageBox()
+        messageBox.setText('Save datasets as..')
+        messageBox.addButton(QtWidgets.QPushButton('mu(E)'), QtWidgets.QMessageBox.YesRole)
+        messageBox.addButton(QtWidgets.QPushButton('normalized mu(E)'), QtWidgets.QMessageBox.NoRole)
+        messageBox.addButton(QtWidgets.QPushButton('flattened mu(E)'), QtWidgets.QMessageBox.NoRole)
+        ret = messageBox.exec_()
+        return ret
+
+    def message_box_warning(self,line1='Warning', line2=''):
+
+        messageBox = QtWidgets.QMessageBox()
+        messageBox.setText(line1)
+        if line2:
+            messageBox.setInformativeText(line2)
+        messageBox.setWindowTitle("Warning")
+        messageBox.setStandardButtons(QMessageBox.Ok | QMessageBox.Cancel)
+        messageBox.exec_()
+
+    def set_ft_window(self):
+        window = dict()
+        window['window_type'] = self.windows_list[self.comboBox_window.currentIndex()]
+        window['r_weight'] = self.spinBox_r_weight.value()
+        try:
+            window['tapering'] = float(self.lineEdit_window_tapering.text())
+        except:
+            window['tapering'] = 1
+
+        return window
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication(sys.argv)
@@ -524,3 +790,5 @@ if __name__ == '__main__':
     main.show()
 
     sys.exit(app.exec_())
+
+

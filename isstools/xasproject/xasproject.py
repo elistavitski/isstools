@@ -1,7 +1,7 @@
 from PyQt5 import QtCore
 import pandas as pd
 from larch import Group as xafsgroup
-from larch_plugins.xafs import pre_edge, autobk, mback
+from larch_plugins.xafs import pre_edge, autobk, mback, xftf
 from larch import Interpreter
 import numpy as np
 import pickle
@@ -34,9 +34,19 @@ class XASDataSet:
         if datatype is not None:
             self.datatype = datatype
         if mu is not None and energy is not None:
-            self.subtract_background()
+            self.clamp_hi = 0
+            self.clamp_lo = 0
+            self.normalize()
             self.deriv()
             self.extract_chi()
+            self.kmin_ft = 3
+            self.kmax_ft = self.kmax
+
+    def update_larch(self):
+        if self.mu is not None:
+            self.larch.mu = np.array(self.mu)
+        if self.energy is not None:
+            self.larch.energy = np.array(self.energy)
 
     def deriv(self):
         mu_deriv=np.diff(np.transpose(self.mu.values))/np.diff(self.energy)
@@ -51,7 +61,7 @@ class XASDataSet:
         diffline = (self.post_edge - self.pre_edge) / self.edge_step
         self.flat = self.norm + step * (1 - diffline)
 
-    def subtract_background(self):
+    def normalize(self):
         pre_edge(self.larch, group=self.larch, _larch=self._larch)
         self.energy = self.larch.energy
         self.mu = self.larch.mu
@@ -68,7 +78,7 @@ class XASDataSet:
         self.flatten()
 
 
-    def subtract_background_force(self):
+    def normalize_force(self):
         pre_edge(self.larch, group=self.larch, _larch=self._larch, e0=self.e0, pre1=self.pre1, pre2=self.pre2,
                                                                            norm1=self.norm1, norm2=self.norm2)
         self.norm = self.larch.norm
@@ -79,17 +89,61 @@ class XASDataSet:
         self.flatten()
 
     def extract_chi(self):
+        print('chi reporting')
         autobk(self.larch, group=self.larch,  _larch=self._larch)
-        self.k = self.larch.k
+
         self.chi = self.larch.chi
         self.bkg = self.larch.bkg
+        self.kmin = self.larch.autobk_details.kmin
+        self.kmax = self.larch.autobk_details.kmax
+        self.nclamp = 2
         self.rbkg = 1
 
+        #self.kmin_ft = self.kmin
+
+
     def extract_chi_force(self):
-        autobk(self.larch, group=self.larch, _larch=self._larch, e0=self.e0)
+        print('chi force reporting')
+        # autobk(self.larch, group=self.larch, _larch=self._larch, e0=self.e0, kmin=self.kmin, kmax=self.kmax)
+        autobk(self.larch, group=self.larch, _larch=self._larch, e0=self.e0, kmin=self.kmin, kmax=self.kmax,
+               nclamp=2, clamp_hi=10)
         self.k = self.larch.k
         self.chi = self.larch.chi
         self.bkg = self.larch.bkg
+
+
+    def extract_ft(self):
+        print('ft reporting')
+        print(self.kmin_ft)
+        xftf(self.larch, group=self.larch,  _larch=self._larch, kmin=self.kmin_ft, kmax=self.kmax)
+
+        self.r = self.larch.r
+        self.chir = self.larch.chir
+        self.chir_mag = self.larch.chir_mag
+        self.chir_im = self.larch.chir_re
+        self.chir_re = self.larch.chir_im
+        #self.chir_pha = self.larch.chir_pha
+        self.kmax_ft = self.kmax
+        self.kwin = self.larch.kwin
+
+    def extract_ft_force(self, window={}):
+        print('ft force reporting')
+        if not window:
+            xftf(self.larch, group=self.larch,  _larch=self._larch, kmin=self.kmin_ft, kmax=self.kmax_ft)
+        else:
+            window_type = window['window_type']
+            tapering = window['tapering']
+            r_weight = window['r_weight']
+            print('setting window')
+            xftf(self.larch, group=self.larch, _larch=self._larch, kmin=self.kmin_ft, kmax=self.kmax_ft,
+                 window=window_type, dk=tapering,rweight=r_weight)
+        self.r = self.larch.r
+        self.chir = self.larch.chir
+        self.chir_mag = self.larch.chir_mag
+        self.chir_im = self.larch.chir_re
+        self.chir_re = self.larch.chir_im
+        #self.chir_pha = self.larch.chir_phas
+        self.kwin = self.larch.kwin
 
 
     @property

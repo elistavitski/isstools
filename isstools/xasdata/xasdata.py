@@ -350,7 +350,6 @@ class XASdataGeneric(XASdata):
     def get_plot_info(self, plotting_dic = dict(), ax = plt, color = 'r', derivative = True ):
         pass
 
-
     def plot(self, plotting_dic = dict(), ax = plt, color = 'r', derivative = True ):
         pass
 
@@ -947,7 +946,7 @@ class XASDataManager:
                 abs_der[min([min_index_der2, max_index_der2]) : max([min_index_der2, max_index_der2]) + 1] = 0
                 abs_der2[min([min_index_der2, max_index_der2]) : max([min_index_der2, max_index_der2]) + 1] = 0
 
-        return -1
+        return  -1
 
 
 
